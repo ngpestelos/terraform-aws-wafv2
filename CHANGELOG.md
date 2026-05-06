@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.1.1...v1.2.0) (2026-05-06)
+
+### Features
+
+* Support nested OR in AND statement and nested AND in OR statement ([#4](https://github.com/terraform-aws-modules/terraform-aws-wafv2/issues/4)) ([11b3fbc](https://github.com/terraform-aws-modules/terraform-aws-wafv2/commit/11b3fbc8cf5de093772a98eb47d16df3b6b627ab))
+
 ## [1.1.1](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.1.0...v1.1.1) (2026-05-06)
 
 ### Bug Fixes
