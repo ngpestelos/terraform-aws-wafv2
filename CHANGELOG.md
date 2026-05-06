@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.1.0...v1.1.1) (2026-05-06)
+
+### Bug Fixes
+
+* Add regex_match_statement support in nested not in AND and OR ([#3](https://github.com/terraform-aws-modules/terraform-aws-wafv2/issues/3)) ([4a134d0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/commit/4a134d041123445288c5a3e36360b7c3e515d421))
+
 ## [1.1.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.0.0...v1.1.0) (2026-04-12)
 
 ### Features
