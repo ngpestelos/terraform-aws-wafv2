@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.2.0...v1.3.0) (2026-05-07)
+
+### Features
+
+* Support AND and OR statement in scope_down_statement ([#5](https://github.com/terraform-aws-modules/terraform-aws-wafv2/issues/5)) ([e6c8a40](https://github.com/terraform-aws-modules/terraform-aws-wafv2/commit/e6c8a401d30c67050591757a45862c0755964ab3))
+
 ## [1.2.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.1.1...v1.2.0) (2026-05-06)
 
 ### Features
