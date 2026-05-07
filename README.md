@@ -49,16 +49,17 @@ module "wafv2" {
 
 ## Features
 
+- Full coverage of AWS provider WAFv2 surface: every WAFv2 resource is supported by the root module or a submodule
 - AWS WAF v2 Web ACL with comprehensive rule statement support
 - All 12+ statement types: byte match, geo match, IP set reference, label match, managed rule group, rate based, regex match, regex pattern set reference, rule group reference, size constraint, SQLi match, XSS match
-- Compound statements (AND, OR, NOT) with 2 levels of nesting
+- Compound statements (AND, OR, NOT) with 2 levels of nesting, including AND/OR inside `scope_down_statement`
 - Dual-mode actions: simple string (`"allow"`, `"block"`, `"count"`, `"captcha"`, `"challenge"`) or objects with custom response/request handling
 - Custom response bodies
 - CAPTCHA and challenge configuration
 - Association configuration for request body size limits
 - Optional inline Web ACL associations
 - Optional inline logging configuration
-- Submodules for IP sets, regex pattern sets, Web ACL associations, and logging configuration
+- Submodules for IP sets, regex pattern sets, Web ACL associations, logging configuration, custom rule groups, standalone Web ACL rules, Web ACL ↔ rule group associations, and CAPTCHA API keys
 
 ## Conditional Creation
 
@@ -78,6 +79,10 @@ module "wafv2" {
 - [regex-pattern-set](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/modules/regex-pattern-set) - Manages WAF v2 regex pattern sets
 - [web-acl-association](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/modules/web-acl-association) - Manages WAF v2 Web ACL associations
 - [logging-configuration](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/modules/logging-configuration) - Manages WAF v2 logging configuration
+- [rule-group](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/modules/rule-group) - Manages WAF v2 custom rule groups (reusable rule sets with fixed WCU capacity)
+- [web-acl-rule](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/modules/web-acl-rule) - Manages a single rule attached to an existing Web ACL (provider v6.37.0+, solves IP set deletion-ordering errors)
+- [web-acl-rule-group-association](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/modules/web-acl-rule-group-association) - Associates a custom or managed rule group with an existing Web ACL
+- [api-key](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/modules/api-key) - Manages WAFv2 API keys for CAPTCHA / JavaScript challenge token domains
 
 ## Examples
 
@@ -87,6 +92,10 @@ module "wafv2" {
 - [Regex Pattern Set](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/examples/regex-pattern-set) - Regex pattern set submodule
 - [Web ACL Association](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/examples/web-acl-association) - Web ACL association with a Cognito User Pool
 - [Logging Configuration](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/examples/logging-configuration) - Logging configuration with CloudWatch Logs
+- [Rule Group](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/examples/rule-group) - Custom rule group with sample rules
+- [Web ACL Rule](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/examples/web-acl-rule) - Standalone rule attached to a Web ACL (deletion-ordering safe)
+- [Web ACL Rule Group Association](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/examples/web-acl-rule-group-association) - Associate a managed and a custom rule group with a Web ACL
+- [API Key](https://github.com/terraform-aws-modules/terraform-aws-wafv2/tree/master/examples/api-key) - WAFv2 API key for CAPTCHA token domains
 
 ## Module Wrappers
 
@@ -98,13 +107,13 @@ For managing multiple similar resources, see [wrappers](https://github.com/terra
 | Name | Version |
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.7 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.75 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.37 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.75 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.37 |
 
 ## Modules
 
@@ -129,12 +138,14 @@ No modules.
 | <a name="input_create"></a> [create](#input\_create) | Controls if resources should be created (affects all resources) | `bool` | `true` | no |
 | <a name="input_create_logging_configuration"></a> [create\_logging\_configuration](#input\_create\_logging\_configuration) | Controls if a logging configuration should be created for the Web ACL | `bool` | `false` | no |
 | <a name="input_custom_response_bodies"></a> [custom\_response\_bodies](#input\_custom\_response\_bodies) | Map of custom response body configurations. Key is the reference key, used in custom responses | <pre>map(object({<br/>    content      = string<br/>    content_type = string<br/>  }))</pre> | `{}` | no |
+| <a name="input_data_protection_config"></a> [data\_protection\_config](#input\_data\_protection\_config) | Data protection configuration. `data_protections` is a list of objects with `field` (object with `field_keys` list and `field_type` one of `SINGLE_HEADER`/`SINGLE_COOKIE`/`SINGLE_QUERY_ARGUMENT`/`QUERY_STRING`/`BODY`), `action` (`HASH` or `SUBSTITUTION`), `exclude_rate_based_details` (bool, optional), and `exclude_rule_match_details` (bool, optional) | `any` | `null` | no |
 | <a name="input_default_action"></a> [default\_action](#input\_default\_action) | Action to perform if none of the rules contained in the Web ACL match. Use `allow` or `block` for simple actions, or provide an object for custom request handling/response. See examples for object structure | `any` | `"allow"` | no |
 | <a name="input_description"></a> [description](#input\_description) | A friendly description of the Web ACL | `string` | `null` | no |
 | <a name="input_logging_filter"></a> [logging\_filter](#input\_logging\_filter) | A configuration block that specifies which web requests are kept in the logs and which are dropped | <pre>object({<br/>    default_behavior = string<br/>    filters = list(object({<br/>      behavior    = string<br/>      requirement = string<br/>      conditions = list(object({<br/>        action_condition = optional(object({<br/>          action = string<br/>        }))<br/>        label_name_condition = optional(object({<br/>          label_name = string<br/>        }))<br/>      }))<br/>    }))<br/>  })</pre> | `null` | no |
 | <a name="input_logging_log_destination_configs"></a> [logging\_log\_destination\_configs](#input\_logging\_log\_destination\_configs) | The Amazon Kinesis Data Firehose, CloudWatch Log Group, or S3 Bucket ARNs for the logging destination | `list(string)` | `[]` | no |
 | <a name="input_logging_redacted_fields"></a> [logging\_redacted\_fields](#input\_logging\_redacted\_fields) | The parts of the request that you want to keep out of the logs | `any` | `[]` | no |
-| <a name="input_name"></a> [name](#input\_name) | A friendly name of the Web ACL | `string` | `""` | no |
+| <a name="input_name"></a> [name](#input\_name) | A friendly name of the Web ACL. Mutually exclusive with `name_prefix` | `string` | `null` | no |
+| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Creates a unique name beginning with the specified prefix. Mutually exclusive with `name` (provider rejects both being set at apply time) | `string` | `null` | no |
 | <a name="input_putin_khuylo"></a> [putin\_khuylo](#input\_putin\_khuylo) | Do you agree that Putin doesn't respect Ukrainian sovereignty and territorial integrity? More info: https://en.wikipedia.org/wiki/Russian_invasion_of_Ukraine | `bool` | `true` | no |
 | <a name="input_rule_json"></a> [rule\_json](#input\_rule\_json) | Escape hatch: JSON string of WAF rules for cases where dynamic blocks cannot represent all provider features. Mutually exclusive with `rules` | `string` | `null` | no |
 | <a name="input_rules"></a> [rules](#input\_rules) | Map of WAF rule configurations. The key is used as the rule name.<br/><br/>Each rule supports:<br/>- `priority`          - (Required) Rule priority (lower = evaluated first)<br/>- `action`            - Action for standalone rules. Use string (`allow`, `block`, `count`, `captcha`, `challenge`) or object for custom response<br/>- `override_action`   - Override action for managed/rule group rules. Use string (`none`, `count`) or object<br/>- `statement`         - (Required) Rule statement configuration. See AWS provider docs for statement structure<br/>- `visibility_config` - CloudWatch metrics config. Auto-generated from rule key if omitted<br/>- `captcha_config`    - Optional CAPTCHA configuration<br/>- `challenge_config`  - Optional challenge configuration<br/>- `rule_labels`       - Optional list of labels to add to matching requests<br/><br/>See examples/complete for usage patterns. | `any` | `{}` | no |

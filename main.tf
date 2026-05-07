@@ -9,7 +9,8 @@ locals {
 resource "aws_wafv2_web_acl" "this" {
   count = local.create ? 1 : 0
 
-  name        = var.name
+  name        = var.name == "" ? null : var.name
+  name_prefix = var.name_prefix
   description = var.description
   scope       = var.scope
 
@@ -57,7 +58,7 @@ resource "aws_wafv2_web_acl" "this" {
 
   visibility_config {
     cloudwatch_metrics_enabled = var.visibility_config.cloudwatch_metrics_enabled
-    metric_name                = coalesce(var.visibility_config.metric_name, var.name)
+    metric_name                = coalesce(var.visibility_config.metric_name, var.name != null && var.name != "" ? var.name : null, var.name_prefix)
     sampled_requests_enabled   = var.visibility_config.sampled_requests_enabled
   }
 
@@ -87,6 +88,26 @@ resource "aws_wafv2_web_acl" "this" {
     content {
       immunity_time_property {
         immunity_time = challenge_config.value.immunity_time_property.immunity_time
+      }
+    }
+  }
+
+  # Data Protection configuration — obfuscate / passthrough sensitive fields in logs / metrics / sampled requests
+  dynamic "data_protection_config" {
+    for_each = var.data_protection_config != null ? [var.data_protection_config] : []
+    content {
+      dynamic "data_protection" {
+        for_each = try(data_protection_config.value.data_protections, [])
+        content {
+          action                     = data_protection.value.action
+          exclude_rate_based_details = try(data_protection.value.exclude_rate_based_details, null)
+          exclude_rule_match_details = try(data_protection.value.exclude_rule_match_details, null)
+
+          field {
+            field_keys = try(data_protection.value.field.field_keys, [])
+            field_type = data_protection.value.field.field_type
+          }
+        }
       }
     }
   }
@@ -371,6 +392,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                     content {}
                   }
+                  dynamic "uri_fragment" {
+                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                    content {
+                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                    }
+                  }
                   dynamic "header_order" {
                     for_each = try(field_to_match.value.header_order, null) != null ? [field_to_match.value.header_order] : []
                     content {
@@ -381,6 +408,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                     content {
                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                    }
+                  }
+                  dynamic "ja4_fingerprint" {
+                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                    content {
+                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                     }
                   }
                 }
@@ -406,6 +439,24 @@ resource "aws_wafv2_web_acl" "this" {
 
               dynamic "forwarded_ip_config" {
                 for_each = try(geo_match_statement.value.forwarded_ip_config, null) != null ? [geo_match_statement.value.forwarded_ip_config] : []
+                content {
+                  fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                  header_name       = forwarded_ip_config.value.header_name
+                }
+              }
+            }
+          }
+
+          #-------------------------------------------------------------------
+          # ASN Match Statement
+          #-------------------------------------------------------------------
+          dynamic "asn_match_statement" {
+            for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+            content {
+              asn_list = asn_match_statement.value.asn_list
+
+              dynamic "forwarded_ip_config" {
+                for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
                 content {
                   fallback_behavior = forwarded_ip_config.value.fallback_behavior
                   header_name       = forwarded_ip_config.value.header_name
@@ -588,6 +639,32 @@ resource "aws_wafv2_web_acl" "this" {
                       }
                     }
                   }
+                  dynamic "aws_managed_rules_anti_ddos_rule_set" {
+                    for_each = try(managed_rule_group_configs.value.aws_managed_rules_anti_ddos_rule_set, null) != null ? [managed_rule_group_configs.value.aws_managed_rules_anti_ddos_rule_set] : []
+                    content {
+                      sensitivity_to_block = try(aws_managed_rules_anti_ddos_rule_set.value.sensitivity_to_block, null)
+
+                      dynamic "client_side_action_config" {
+                        for_each = try(aws_managed_rules_anti_ddos_rule_set.value.client_side_action_config, null) != null ? [aws_managed_rules_anti_ddos_rule_set.value.client_side_action_config] : []
+                        content {
+                          dynamic "challenge" {
+                            for_each = try(client_side_action_config.value.challenge, null) != null ? [client_side_action_config.value.challenge] : []
+                            content {
+                              usage_of_action = challenge.value.usage_of_action
+                              sensitivity     = try(challenge.value.sensitivity, null)
+
+                              dynamic "exempt_uri_regular_expression" {
+                                for_each = try(challenge.value.exempt_uri_regular_expression, [])
+                                content {
+                                  regex_string = exempt_uri_regular_expression.value.regex_string
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
 
@@ -660,6 +737,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -726,6 +809,12 @@ resource "aws_wafv2_web_acl" "this" {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
                             }
                           }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                            }
+                          }
                         }
                       }
                       dynamic "text_transformation" {
@@ -741,6 +830,24 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(scope_down_statement.value.geo_match_statement, null) != null ? [scope_down_statement.value.geo_match_statement] : []
                     content {
                       country_codes = geo_match_statement.value.country_codes
+                    }
+                  }
+
+                  #-------------------------------------------------------------------
+                  # ASN Match Statement
+                  #-------------------------------------------------------------------
+                  dynamic "asn_match_statement" {
+                    for_each = try(scope_down_statement.value.asn_match_statement, null) != null ? [scope_down_statement.value.asn_match_statement] : []
+                    content {
+                      asn_list = asn_match_statement.value.asn_list
+
+                      dynamic "forwarded_ip_config" {
+                        for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                        content {
+                          fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                          header_name       = forwarded_ip_config.value.header_name
+                        }
+                      }
                     }
                   }
                   dynamic "ip_set_reference_statement" {
@@ -792,6 +899,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -856,6 +969,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -906,6 +1025,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -970,6 +1095,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -1021,6 +1152,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -1085,6 +1222,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -1133,6 +1276,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -1197,6 +1346,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -1247,6 +1402,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -1311,6 +1472,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -1367,6 +1534,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -1433,6 +1606,12 @@ resource "aws_wafv2_web_acl" "this" {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
                                     }
                                   }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                                    }
+                                  }
                                 }
                               }
                               dynamic "text_transformation" {
@@ -1448,6 +1627,24 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                             content {
                               country_codes = geo_match_statement.value.country_codes
+                            }
+                          }
+
+                          #-------------------------------------------------------------------
+                          # ASN Match Statement
+                          #-------------------------------------------------------------------
+                          dynamic "asn_match_statement" {
+                            for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                            content {
+                              asn_list = asn_match_statement.value.asn_list
+
+                              dynamic "forwarded_ip_config" {
+                                for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                                content {
+                                  fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                                  header_name       = forwarded_ip_config.value.header_name
+                                }
+                              }
                             }
                           }
                           dynamic "ip_set_reference_statement" {
@@ -1494,6 +1691,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -1558,6 +1761,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -1603,6 +1812,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -1667,6 +1882,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -1710,6 +1931,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -1774,6 +2001,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -1818,6 +2051,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -1882,6 +2121,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -1926,6 +2171,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -1990,6 +2241,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -6218,6 +6475,18 @@ resource "aws_wafv2_web_acl" "this" {
                       namespace = label_namespace.value.namespace
                     }
                   }
+                  dynamic "ja3_fingerprint" {
+                    for_each = try(custom_key.value.ja3_fingerprint, null) != null ? [custom_key.value.ja3_fingerprint] : []
+                    content {
+                      fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                    }
+                  }
+                  dynamic "ja4_fingerprint" {
+                    for_each = try(custom_key.value.ja4_fingerprint, null) != null ? [custom_key.value.ja4_fingerprint] : []
+                    content {
+                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                    }
+                  }
                 }
               }
 
@@ -6259,6 +6528,12 @@ resource "aws_wafv2_web_acl" "this" {
                           dynamic "uri_path" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
+                          }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
                           }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
@@ -6326,6 +6601,12 @@ resource "aws_wafv2_web_acl" "this" {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
                             }
                           }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                            }
+                          }
                         }
                       }
                       dynamic "text_transformation" {
@@ -6341,6 +6622,24 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(scope_down_statement.value.geo_match_statement, null) != null ? [scope_down_statement.value.geo_match_statement] : []
                     content {
                       country_codes = geo_match_statement.value.country_codes
+                    }
+                  }
+
+                  #-------------------------------------------------------------------
+                  # ASN Match Statement
+                  #-------------------------------------------------------------------
+                  dynamic "asn_match_statement" {
+                    for_each = try(scope_down_statement.value.asn_match_statement, null) != null ? [scope_down_statement.value.asn_match_statement] : []
+                    content {
+                      asn_list = asn_match_statement.value.asn_list
+
+                      dynamic "forwarded_ip_config" {
+                        for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                        content {
+                          fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                          header_name       = forwarded_ip_config.value.header_name
+                        }
+                      }
                     }
                   }
                   dynamic "ip_set_reference_statement" {
@@ -6392,6 +6691,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -6456,6 +6761,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -6506,6 +6817,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -6570,6 +6887,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -6621,6 +6944,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -6685,6 +7014,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -6733,6 +7068,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -6797,6 +7138,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -6847,6 +7194,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -6911,6 +7264,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -6967,6 +7326,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -7033,6 +7398,12 @@ resource "aws_wafv2_web_acl" "this" {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
                                     }
                                   }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                                    }
+                                  }
                                 }
                               }
                               dynamic "text_transformation" {
@@ -7048,6 +7419,24 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                             content {
                               country_codes = geo_match_statement.value.country_codes
+                            }
+                          }
+
+                          #-------------------------------------------------------------------
+                          # ASN Match Statement
+                          #-------------------------------------------------------------------
+                          dynamic "asn_match_statement" {
+                            for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                            content {
+                              asn_list = asn_match_statement.value.asn_list
+
+                              dynamic "forwarded_ip_config" {
+                                for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                                content {
+                                  fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                                  header_name       = forwarded_ip_config.value.header_name
+                                }
+                              }
                             }
                           }
                           dynamic "ip_set_reference_statement" {
@@ -7094,6 +7483,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -7158,6 +7553,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -7203,6 +7604,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -7267,6 +7674,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -7310,6 +7723,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -7374,6 +7793,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -7418,6 +7843,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -7482,6 +7913,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -7526,6 +7963,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -7590,6 +8033,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -11759,6 +12208,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                     content {}
                   }
+                  dynamic "uri_fragment" {
+                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                    content {
+                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                    }
+                  }
                   dynamic "cookies" {
                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                     content {
@@ -11823,6 +12278,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                     content {
                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                    }
+                  }
+                  dynamic "ja4_fingerprint" {
+                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                    content {
+                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                     }
                   }
                 }
@@ -11877,6 +12338,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                     content {}
                   }
+                  dynamic "uri_fragment" {
+                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                    content {
+                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                    }
+                  }
                   dynamic "cookies" {
                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                     content {
@@ -11941,6 +12408,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                     content {
                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                    }
+                  }
+                  dynamic "ja4_fingerprint" {
+                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                    content {
+                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                     }
                   }
                 }
@@ -12036,6 +12509,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                     content {}
                   }
+                  dynamic "uri_fragment" {
+                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                    content {
+                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                    }
+                  }
                   dynamic "cookies" {
                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                     content {
@@ -12100,6 +12579,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                     content {
                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                    }
+                  }
+                  dynamic "ja4_fingerprint" {
+                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                    content {
+                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                     }
                   }
                 }
@@ -12152,6 +12637,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                     content {}
                   }
+                  dynamic "uri_fragment" {
+                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                    content {
+                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                    }
+                  }
                   dynamic "cookies" {
                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                     content {
@@ -12216,6 +12707,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                     content {
                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                    }
+                  }
+                  dynamic "ja4_fingerprint" {
+                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                    content {
+                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                     }
                   }
                 }
@@ -12270,6 +12767,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                     content {}
                   }
+                  dynamic "uri_fragment" {
+                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                    content {
+                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                    }
+                  }
                   dynamic "cookies" {
                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                     content {
@@ -12334,6 +12837,12 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                     content {
                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                    }
+                  }
+                  dynamic "ja4_fingerprint" {
+                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                    content {
+                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                     }
                   }
                 }
@@ -12394,6 +12903,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -12460,6 +12975,12 @@ resource "aws_wafv2_web_acl" "this" {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
                             }
                           }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                            }
+                          }
                         }
                       }
                       dynamic "text_transformation" {
@@ -12475,6 +12996,24 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                     content {
                       country_codes = geo_match_statement.value.country_codes
+                    }
+                  }
+
+                  #-------------------------------------------------------------------
+                  # ASN Match Statement
+                  #-------------------------------------------------------------------
+                  dynamic "asn_match_statement" {
+                    for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                    content {
+                      asn_list = asn_match_statement.value.asn_list
+
+                      dynamic "forwarded_ip_config" {
+                        for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                        content {
+                          fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                          header_name       = forwarded_ip_config.value.header_name
+                        }
+                      }
                     }
                   }
                   dynamic "ip_set_reference_statement" {
@@ -12521,6 +13060,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -12585,6 +13130,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -12630,6 +13181,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -12694,6 +13251,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -12737,6 +13300,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -12801,6 +13370,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -12845,6 +13420,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -12909,6 +13490,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -12953,6 +13540,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -13017,6 +13610,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -13080,6 +13679,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -13146,6 +13751,12 @@ resource "aws_wafv2_web_acl" "this" {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
                             }
                           }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                            }
+                          }
                         }
                       }
                       dynamic "text_transformation" {
@@ -13161,6 +13772,24 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                     content {
                       country_codes = geo_match_statement.value.country_codes
+                    }
+                  }
+
+                  #-------------------------------------------------------------------
+                  # ASN Match Statement
+                  #-------------------------------------------------------------------
+                  dynamic "asn_match_statement" {
+                    for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                    content {
+                      asn_list = asn_match_statement.value.asn_list
+
+                      dynamic "forwarded_ip_config" {
+                        for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                        content {
+                          fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                          header_name       = forwarded_ip_config.value.header_name
+                        }
+                      }
                     }
                   }
                   dynamic "ip_set_reference_statement" {
@@ -13208,6 +13837,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -13272,6 +13907,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -13315,6 +13956,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -13379,6 +14026,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -13423,6 +14076,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -13487,6 +14146,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -13531,6 +14196,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -13595,6 +14266,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -13639,6 +14316,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -13705,6 +14388,12 @@ resource "aws_wafv2_web_acl" "this" {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
                             }
                           }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                            }
+                          }
                         }
                       }
                       dynamic "text_transformation" {
@@ -13726,6 +14415,24 @@ resource "aws_wafv2_web_acl" "this" {
                           dynamic "geo_match_statement" {
                             for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                             content { country_codes = geo_match_statement.value.country_codes }
+                          }
+
+                          #-------------------------------------------------------------------
+                          # ASN Match Statement
+                          #-------------------------------------------------------------------
+                          dynamic "asn_match_statement" {
+                            for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                            content {
+                              asn_list = asn_match_statement.value.asn_list
+
+                              dynamic "forwarded_ip_config" {
+                                for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                                content {
+                                  fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                                  header_name       = forwarded_ip_config.value.header_name
+                                }
+                              }
+                            }
                           }
                           dynamic "ip_set_reference_statement" {
                             for_each = try(statement.value.ip_set_reference_statement, null) != null ? [statement.value.ip_set_reference_statement] : []
@@ -13753,6 +14460,12 @@ resource "aws_wafv2_web_acl" "this" {
                                   dynamic "uri_path" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
+                                  }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
                                   }
                                   dynamic "query_string" {
                                     for_each = try(field_to_match.value.query_string, null) != null ? [1] : []
@@ -13826,6 +14539,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                   dynamic "all_query_arguments" {
@@ -13887,6 +14606,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -13951,6 +14676,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -13997,6 +14728,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14061,6 +14798,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -14104,6 +14847,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14168,6 +14917,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -14212,6 +14967,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14276,6 +15037,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -14320,6 +15087,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14384,6 +15157,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -14413,6 +15192,24 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                             content { country_codes = geo_match_statement.value.country_codes }
                           }
+
+                          #-------------------------------------------------------------------
+                          # ASN Match Statement
+                          #-------------------------------------------------------------------
+                          dynamic "asn_match_statement" {
+                            for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                            content {
+                              asn_list = asn_match_statement.value.asn_list
+
+                              dynamic "forwarded_ip_config" {
+                                for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                                content {
+                                  fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                                  header_name       = forwarded_ip_config.value.header_name
+                                }
+                              }
+                            }
+                          }
                           dynamic "ip_set_reference_statement" {
                             for_each = try(statement.value.ip_set_reference_statement, null) != null ? [statement.value.ip_set_reference_statement] : []
                             content { arn = ip_set_reference_statement.value.arn }
@@ -14439,6 +15236,12 @@ resource "aws_wafv2_web_acl" "this" {
                                   dynamic "uri_path" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
+                                  }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
                                   }
                                   dynamic "query_string" {
                                     for_each = try(field_to_match.value.query_string, null) != null ? [1] : []
@@ -14512,6 +15315,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                   dynamic "all_query_arguments" {
@@ -14573,6 +15382,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14637,6 +15452,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -14683,6 +15504,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14747,6 +15574,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -14790,6 +15623,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14854,6 +15693,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -14898,6 +15743,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -14962,6 +15813,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -15006,6 +15863,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -15070,6 +15933,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -15139,6 +16008,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -15205,6 +16080,12 @@ resource "aws_wafv2_web_acl" "this" {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
                             }
                           }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                            }
+                          }
                         }
                       }
                       dynamic "text_transformation" {
@@ -15220,6 +16101,24 @@ resource "aws_wafv2_web_acl" "this" {
                     for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                     content {
                       country_codes = geo_match_statement.value.country_codes
+                    }
+                  }
+
+                  #-------------------------------------------------------------------
+                  # ASN Match Statement
+                  #-------------------------------------------------------------------
+                  dynamic "asn_match_statement" {
+                    for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                    content {
+                      asn_list = asn_match_statement.value.asn_list
+
+                      dynamic "forwarded_ip_config" {
+                        for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                        content {
+                          fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                          header_name       = forwarded_ip_config.value.header_name
+                        }
+                      }
                     }
                   }
                   dynamic "ip_set_reference_statement" {
@@ -15267,6 +16166,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -15331,6 +16236,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -15374,6 +16285,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -15438,6 +16355,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -15482,6 +16405,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -15546,6 +16475,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -15590,6 +16525,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -15654,6 +16595,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                             content {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                            }
+                          }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
                             }
                           }
                         }
@@ -15698,6 +16645,12 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                             content {}
                           }
+                          dynamic "uri_fragment" {
+                            for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                            content {
+                              fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                            }
+                          }
                           dynamic "cookies" {
                             for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                             content {
@@ -15764,6 +16717,12 @@ resource "aws_wafv2_web_acl" "this" {
                               fallback_behavior = ja3_fingerprint.value.fallback_behavior
                             }
                           }
+                          dynamic "ja4_fingerprint" {
+                            for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                            content {
+                              fallback_behavior = ja4_fingerprint.value.fallback_behavior
+                            }
+                          }
                         }
                       }
                       dynamic "text_transformation" {
@@ -15785,6 +16744,24 @@ resource "aws_wafv2_web_acl" "this" {
                           dynamic "geo_match_statement" {
                             for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                             content { country_codes = geo_match_statement.value.country_codes }
+                          }
+
+                          #-------------------------------------------------------------------
+                          # ASN Match Statement
+                          #-------------------------------------------------------------------
+                          dynamic "asn_match_statement" {
+                            for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                            content {
+                              asn_list = asn_match_statement.value.asn_list
+
+                              dynamic "forwarded_ip_config" {
+                                for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                                content {
+                                  fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                                  header_name       = forwarded_ip_config.value.header_name
+                                }
+                              }
+                            }
                           }
                           dynamic "ip_set_reference_statement" {
                             for_each = try(statement.value.ip_set_reference_statement, null) != null ? [statement.value.ip_set_reference_statement] : []
@@ -15812,6 +16789,12 @@ resource "aws_wafv2_web_acl" "this" {
                                   dynamic "uri_path" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
+                                  }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
                                   }
                                   dynamic "query_string" {
                                     for_each = try(field_to_match.value.query_string, null) != null ? [1] : []
@@ -15885,6 +16868,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                   dynamic "all_query_arguments" {
@@ -15946,6 +16935,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16010,6 +17005,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16056,6 +17057,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16120,6 +17127,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16163,6 +17176,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16227,6 +17246,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16271,6 +17296,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16335,6 +17366,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16379,6 +17416,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16443,6 +17486,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16472,6 +17521,24 @@ resource "aws_wafv2_web_acl" "this" {
                             for_each = try(statement.value.geo_match_statement, null) != null ? [statement.value.geo_match_statement] : []
                             content { country_codes = geo_match_statement.value.country_codes }
                           }
+
+                          #-------------------------------------------------------------------
+                          # ASN Match Statement
+                          #-------------------------------------------------------------------
+                          dynamic "asn_match_statement" {
+                            for_each = try(statement.value.asn_match_statement, null) != null ? [statement.value.asn_match_statement] : []
+                            content {
+                              asn_list = asn_match_statement.value.asn_list
+
+                              dynamic "forwarded_ip_config" {
+                                for_each = try(asn_match_statement.value.forwarded_ip_config, null) != null ? [asn_match_statement.value.forwarded_ip_config] : []
+                                content {
+                                  fallback_behavior = forwarded_ip_config.value.fallback_behavior
+                                  header_name       = forwarded_ip_config.value.header_name
+                                }
+                              }
+                            }
+                          }
                           dynamic "ip_set_reference_statement" {
                             for_each = try(statement.value.ip_set_reference_statement, null) != null ? [statement.value.ip_set_reference_statement] : []
                             content { arn = ip_set_reference_statement.value.arn }
@@ -16498,6 +17565,12 @@ resource "aws_wafv2_web_acl" "this" {
                                   dynamic "uri_path" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
+                                  }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
                                   }
                                   dynamic "query_string" {
                                     for_each = try(field_to_match.value.query_string, null) != null ? [1] : []
@@ -16571,6 +17644,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                   dynamic "all_query_arguments" {
@@ -16632,6 +17711,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16696,6 +17781,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16742,6 +17833,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16806,6 +17903,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16849,6 +17952,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -16913,6 +18022,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -16957,6 +18072,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -17021,6 +18142,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
@@ -17065,6 +18192,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.uri_path, null) != null ? [1] : []
                                     content {}
                                   }
+                                  dynamic "uri_fragment" {
+                                    for_each = try(field_to_match.value.uri_fragment, null) != null ? [field_to_match.value.uri_fragment] : []
+                                    content {
+                                      fallback_behavior = try(uri_fragment.value.fallback_behavior, null)
+                                    }
+                                  }
                                   dynamic "cookies" {
                                     for_each = try(field_to_match.value.cookies, null) != null ? [field_to_match.value.cookies] : []
                                     content {
@@ -17129,6 +18262,12 @@ resource "aws_wafv2_web_acl" "this" {
                                     for_each = try(field_to_match.value.ja3_fingerprint, null) != null ? [field_to_match.value.ja3_fingerprint] : []
                                     content {
                                       fallback_behavior = ja3_fingerprint.value.fallback_behavior
+                                    }
+                                  }
+                                  dynamic "ja4_fingerprint" {
+                                    for_each = try(field_to_match.value.ja4_fingerprint, null) != null ? [field_to_match.value.ja4_fingerprint] : []
+                                    content {
+                                      fallback_behavior = ja4_fingerprint.value.fallback_behavior
                                     }
                                   }
                                 }
