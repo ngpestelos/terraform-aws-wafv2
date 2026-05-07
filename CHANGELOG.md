@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.3.0...v2.0.0) (2026-05-07)
+
+### ⚠ BREAKING CHANGES
+
+* Full WAFv2 parity — add rule-group, web-acl-rule, web-acl-rule-group-association, api-key submodules (#6)
+
+### Features
+
+* Full WAFv2 parity — add rule-group, web-acl-rule, web-acl-rule-group-association, api-key submodules ([#6](https://github.com/terraform-aws-modules/terraform-aws-wafv2/issues/6)) ([1d2444e](https://github.com/terraform-aws-modules/terraform-aws-wafv2/commit/1d2444e9036a2403c1cd27a8bc8fd1d02cf1065a))
+
 ## [1.3.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.2.0...v1.3.0) (2026-05-07)
 
 ### Features
