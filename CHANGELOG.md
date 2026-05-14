@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v2.0.0...v2.1.0) (2026-05-14)
+
+### Features
+
+* Add region, typed redacted_fields, and validations to logging configuration ([#8](https://github.com/terraform-aws-modules/terraform-aws-wafv2/issues/8)) ([3d961f3](https://github.com/terraform-aws-modules/terraform-aws-wafv2/commit/3d961f39e4ad376962a5e3d5b3e2f3f59f332752))
+
 ## [2.0.0](https://github.com/terraform-aws-modules/terraform-aws-wafv2/compare/v1.3.0...v2.0.0) (2026-05-07)
 
 ### ⚠ BREAKING CHANGES
